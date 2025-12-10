@@ -1,0 +1,126 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © BOSWaves
+
+//@version=6
+indicator("KEY", overlay=false)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Inputs
+// ══════════════════════════════════════════════════════════════════════════════
+
+vwapAnchor = input.string("Session", "VWAP Anchor", options=["Session", "Week", "Month"],
+     tooltip="Time period for VWAP reset. Session: daily, Week: weekly, Month: monthly.")
+fastLength = input.int(12, "Fast Length", minval=1,
+     tooltip="Period for the fast VWAP EMA. Lower values respond faster to price changes.")
+slowLength = input.int(26, "Slow Length", minval=1,
+     tooltip="Period for the slow VWAP EMA. Higher values smooth out noise but lag more.")
+signalLength = input.int(9, "Signal Length", minval=1,
+     tooltip="Smoothing period for the signal line. Used to identify crossover points.")
+showSignals = input.bool(true, "Show Buy/Sell Signals",
+     tooltip="Display diamond markers on the price chart when valid crossovers occur.")
+showHistogram = input.bool(true, "Show Histogram",
+     tooltip="Display the histogram bars showing the difference between MACD and Signal lines.")
+
+// Signal Filter
+zeroLineThreshold = input.float(50, "Zero Line Threshold", minval=0.0, step=10, 
+     tooltip="Minimum distance from zero line required for crossover signals. Filters out weak signals that occur too close to the zero line.")
+
+// Color Settings
+bullColor = input.color(#00e5ff, "Bullish Color", group="Colors",
+     tooltip="Color for bullish signals and positive MACD values.")
+bearColor = input.color(#ff1744, "Bearish Color", group="Colors",
+     tooltip="Color for bearish signals and negative MACD values.")
+signalColor = input.color(#ffea00, "Signal Line Color", group="Colors",
+     tooltip="Color for the signal line (EMA of MACD).")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VWAP Calculation
+// ══════════════════════════════════════════════════════════════════════════════
+
+vwapValue = switch vwapAnchor
+    "Session" => ta.vwap(close)
+    "Week" => ta.vwap(close, timeframe.change("W"))
+    "Month" => ta.vwap(close, timeframe.change("M"))
+    => ta.vwap(close)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VWAP-MACD Calculation
+// ══════════════════════════════════════════════════════════════════════════════
+
+fastVWAP = ta.ema(vwapValue, fastLength)
+slowVWAP = ta.ema(vwapValue, slowLength)
+
+macdLine = fastVWAP - slowVWAP
+signalLine = ta.ema(macdLine, signalLength)
+histogram = macdLine - signalLine
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Signal Logic
+// ══════════════════════════════════════════════════════════════════════════════
+
+bullishCross = ta.crossover(macdLine, signalLine)
+bearishCross = ta.crossunder(macdLine, signalLine)
+
+// Filter out signals that occur too close to zero line
+macdFarFromZero = math.abs(macdLine) > zeroLineThreshold
+signalFarFromZero = math.abs(signalLine) > zeroLineThreshold
+bothLinesFarFromZero = macdFarFromZero and signalFarFromZero
+
+validBullishCross = bullishCross and bothLinesFarFromZero
+validBearishCross = bearishCross and bothLinesFarFromZero
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Plots
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Zero Line
+hline(0, "Zero Line", color=color.new(color.gray, 50), linestyle=hline.style_dashed)
+
+// MACD Line with gradient
+macdColor = macdLine >= 0 ? bullColor : bearColor
+plot(macdLine, "MACD Line", color=macdColor, linewidth=4)
+
+// Signal Line
+plot(signalLine, "Signal Line", color=signalColor, linewidth=2)
+
+// Histogram with gradient fill
+histogramPlot = plot(showHistogram ? histogram : na, "Histogram", 
+     histogram > 0 ? color.new(bullColor, 0) : color.new(bearColor, 0), 
+     style=plot.style_columns)
+basePlot = plot(0, "Base", display=display.none)
+
+// Gradient fill for histogram
+fill(histogramPlot, basePlot, math.max(histogram, 0), math.min(histogram, 0), 
+     histogram > 0 ? color.new(bullColor, 50) : color.new(bearColor, 100),
+     histogram > 0 ? color.new(bullColor, 100) : color.new(bearColor, 50))
+
+// Fill between MACD and Signal
+fillColor = macdLine >= signalLine ? color.new(bullColor, 85) : color.new(bearColor, 85)
+fill(plot(macdLine, display=display.none), plot(signalLine, display=display.none), fillColor)
+
+// Crossover dots on indicator (only valid signals)
+plot(validBullishCross ? macdLine : na, "Bullish Cross Dot", color=color.new(bullColor, 0), 
+     style=plot.style_circles, linewidth=6)
+plot(validBearishCross ? macdLine : na, "Bearish Cross Dot", color=color.new(bearColor, 0), 
+     style=plot.style_circles, linewidth=6)
+
+// Candle coloring
+candleColor = macdLine >= 0 ? bullColor : bearColor
+barcolor(candleColor)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Signals
+// ══════════════════════════════════════════════════════════════════════════════
+
+plotshape(showSignals and validBullishCross, "Buy", shape.labelup, location.belowbar, 
+     color=color.new(bullColor, 0), size=size.tiny, force_overlay=true, text="BUY", textcolor=color.white)
+
+plotshape(showSignals and validBearishCross, "Sell", shape.labeldown, location.abovebar, 
+     color=color.new(bearColor, 0), size=size.tiny, force_overlay=true, text="SELL", textcolor=color.white)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Alerts
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(validBullishCross, "VWAP-MACD Bullish Cross", "VWAP-MACD: Bullish crossover detected")
+alertcondition(validBearishCross, "VWAP-MACD Bearish Cross", "VWAP-MACD: Bearish crossunder detected")
